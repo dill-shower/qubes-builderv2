@@ -45,7 +45,8 @@ jobs:
 
           # Выведем структуру для отладки (можно убрать)
           tree ~/qubes-builder
-
+          python3 -m pip install --upgrade pip
+          pip3 install pathspec
           # Запускаем скрипт подготовки, аналогичный команде:
           #   ~/qubes-builder/gitlab-preparev2 "$CI_PROJECT_DIR" $SUBMODULE_OF
           # Здесь SUBMODULE_OF не задан – если он нужен, можно передать его через env
