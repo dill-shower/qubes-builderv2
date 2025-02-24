@@ -25,7 +25,7 @@ jobs:
           
           # Клонируем qubes-builderv2
           git clone https://github.com/QubesOS/qubes-builderv2 ~/qubes-builder
-
+          dnf install -y python3-pip
           # Клонируем репозиторий конфигураций
           git clone -b main https://github.com/QubesOS/qubes-continuous-integration ~/qubes-continuous-integration
 
