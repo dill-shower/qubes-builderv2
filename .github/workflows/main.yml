@@ -42,7 +42,7 @@ jobs:
           pip3 install pathspec
 
           # Устанавливаем дополнительные зависимости
-          dnf install -y $(cat dependencies-debian.txt | grep -v docker.io)
+          dnf install -y $(cat dependencies-fedora.txt | grep -v docker.io)
 
           # Подготовка
           ~/qubes-builder/gitlab-preparev2 "$CI_PROJECT_DIR" ""
