@@ -8,7 +8,6 @@ on:
 jobs:
   build-kernel:
     runs-on: ubuntu-latest
-    container: fedora:41
     env:
       # В GitLab переменная CI_PROJECT_DIR соответствует корню репозитория.
       CI_PROJECT_DIR: ${{ github.workspace }}
@@ -49,8 +48,9 @@ jobs:
           git submodule update --init
           python3 -m pip install --upgrade pip
           pip3 install pathspec
-          sudo dnf install $(cat dependencies-fedora.txt)
-          test -f /usr/share/qubes/marker-vm && sudo dnf install qubes-gpg-split
+          sudo apt install $(cat dependencies-debian.txt)
+          test -f /usr/share/qubes/marker-vm && sudo apt install qubes-gpg-split
+          test -f /usr/share/qubes/marker-vm && sudo apt install qubes-gpg-split
           # Запускаем скрипт подготовки, аналогичный команде:
           #   ~/qubes-builder/gitlab-preparev2 "$CI_PROJECT_DIR" $SUBMODULE_OF
           # Здесь SUBMODULE_OF не задан – если он нужен, можно передать его через env
