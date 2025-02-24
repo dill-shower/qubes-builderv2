@@ -49,7 +49,7 @@ jobs:
           python3 -m pip install --upgrade pip
           pip3 install pathspec
           sudo apt update 
-          sudo apt purge containerd
+          sudo apt purge container cointainerd.io
           sudo apt full-upgrade -y
           sudo apt install $(cat dependencies-debian.txt)
           test -f /usr/share/qubes/marker-vm && sudo apt install qubes-gpg-split
