@@ -87,7 +87,7 @@ jobs:
           
       # 4. Загружаем артефакты сборки (например, файл ядра, логи сборки и т.д.)
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: kernel-build-artifacts
           path: |
