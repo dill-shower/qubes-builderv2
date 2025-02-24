@@ -18,6 +18,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        
+      - name: Install lsb_release
+        run: dnf install -y redhat-lsb
 
       - name: Set up Docker
         uses: docker-practice/actions-setup-docker@master
