@@ -19,6 +19,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Docker
+        uses: docker-practice/actions-setup-docker@master
+
+      - name: Pull Qubes builder image
+        run: |
+          docker pull registry.gitlab.com/qubesos/docker-images/qubes-builder-fedora:latest
+          docker tag registry.gitlab.com/qubesos/docker-images/qubes-builder-fedora:latest qubes-builder-fedora:latest
+
       - name: Prepare sources
         run: |
           set -xe
