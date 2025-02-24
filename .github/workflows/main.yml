@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: registry.gitlab.com/qubesos/docker-images/qubes-builder-fedora:latest
+      options: --user root
     env:
       CI_PROJECT_DIR: ${{ github.workspace }}
       DIST: host-fc37
