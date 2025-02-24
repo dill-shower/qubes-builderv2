@@ -8,6 +8,7 @@ on:
 jobs:
   build-kernel:
     runs-on: fedora-latest
+    container: fedora:41
     env:
       # В GitLab переменная CI_PROJECT_DIR соответствует корню репозитория.
       CI_PROJECT_DIR: ${{ github.workspace }}
