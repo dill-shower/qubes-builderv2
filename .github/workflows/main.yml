@@ -1,0 +1,95 @@
+name: Build Qubes dom0 Kernel (Fedora 37, r4.2)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-latest
+    env:
+      # В GitLab переменная CI_PROJECT_DIR соответствует корню репозитория.
+      CI_PROJECT_DIR: ${{ github.workspace }}
+      # Определяем имя дистрибутива для сборки, согласно шаблону job'а r4.2:build:host-fc37:
+      DIST: host-fc37
+      # Если потребуется, можно задать другой компонент. Здесь по умолчанию используется корень репозитория.
+      COMPONENT: ${{ github.workspace }}
+    steps:
+      # 1. Получаем исходники вашего репозитория
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2. Этап подготовки (аналог шаблона .r4.2_components_prepare)
+      - name: Prepare sources
+        run: |
+          set -xe
+
+          # Подтягиваем docker-образ для сборки (Fedora 37 builder)
+          docker pull registry.gitlab.com/qubesos/docker-images/qubes-builder-fedora:latest
+          docker tag registry.gitlab.com/qubesos/docker-images/qubes-builder-fedora:latest qubes-builder-fedora:latest
+
+          # Клонируем qubes-builderv2 в домашнюю директорию (этот репозиторий содержит скрипты сборки)
+          git clone https://github.com/QubesOS/qubes-builderv2 ~/qubes-builder
+
+          # Клонируем репозиторий конфигураций для сборки (gitlab-ci настройки)
+          git clone -b main https://github.com/QubesOS/qubes-continuous-integration ~/qubes-continuous-integration
+
+          # Перемещаем скрипты сборки и докерфайлы в qubes-builder
+          mv ~/qubes-continuous-integration/scripts/gitlab-*v2 ~/qubes-builder/
+          mkdir -p ~/qubes-builder/dockerfiles
+          mv ~/qubes-continuous-integration/dockerfiles/*.Dockerfile ~/qubes-builder/dockerfiles/
+          mv ~/qubes-continuous-integration/scripts/repo-key.gpgbatch ~/qubes-builder/
+          mv ~/qubes-continuous-integration/scripts/combine-and-sign-repo ~/qubes-builder/
+          mv ~/qubes-continuous-integration/scripts/gitlab-builderv2.yml ~/qubes-builder/builder.yml
+
+          # Выведем структуру для отладки (можно убрать)
+          tree ~/qubes-builder
+
+          # Запускаем скрипт подготовки, аналогичный команде:
+          #   ~/qubes-builder/gitlab-preparev2 "$CI_PROJECT_DIR" $SUBMODULE_OF
+          # Здесь SUBMODULE_OF не задан – если он нужен, можно передать его через env
+          ~/qubes-builder/gitlab-preparev2 "$CI_PROJECT_DIR" ""
+          
+          # Упаковываем директорию qubes-builder в tar-архив для передачи между этапами
+          tar cJf "$CI_PROJECT_DIR/qubes-builder.tar.xz" --strip-components=1 -C ~ qubes-builder
+
+          # Если есть папка artifacts, удаляем её, потом перемещаем скопированные артефакты от qubes-builder (аналог after_script)
+          sudo rm -rf "$CI_PROJECT_DIR/artifacts" || true
+          mv ~/qubes-builder/artifacts "$CI_PROJECT_DIR/"
+      
+      # 3. Этап сборки (аналог шаблона .r4.2_components_build и файла gitlab-host-build.yml)
+      - name: Build kernel (host-FC37)
+        run: |
+          set -xe
+
+          # Повторно подтягиваем образ билдера для сборки
+          docker pull registry.gitlab.com/qubesos/docker-images/qubes-builder-fedora:latest
+          docker tag registry.gitlab.com/qubesos/docker-images/qubes-builder-fedora:latest qubes-builder-fedora:latest
+
+          # Извлекаем ранее подготовленный архив с qubes-builder
+          tar xf "$CI_PROJECT_DIR/qubes-builder.tar.xz" -C ~/
+
+          # Получаем chroot-окружение. Заметьте, здесь используется переменная DIST, определённая как host-fc37
+          ~/qubes-builder/gitlab-chrootv2 "${DIST}" || echo "An error occurred while fetching chroot. Skipping..."
+          
+          # Запускаем сборку ядра. Обратите внимание на использование COMPONENT и DIST – они должны соответствовать тому, что ожидал шаблон в GitLab
+          ~/qubes-builder/gitlab-buildv2 "${COMPONENT}" "${DIST}"
+          
+          # Чистим артефакты: удаляем старые и подставляем новые артефакты сборки
+          sudo rm -rf "$CI_PROJECT_DIR/artifacts" || true
+          mv ~/qubes-builder/artifacts "$CI_PROJECT_DIR/"
+          
+          # Если размер рабочей директории слишком велик – удаляем исходные RPM (опционально)
+          if [ $(du -s "$CI_PROJECT_DIR" | awk '{print $1}') -ge $((1024*1024)) ]; then
+            find "$CI_PROJECT_DIR/" -name '*.src.rpm' -delete
+          fi
+          
+      # 4. Загружаем артефакты сборки (например, файл ядра, логи сборки и т.д.)
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: kernel-build-artifacts
+          path: |
+            artifacts/repository
+            artifacts/logs
