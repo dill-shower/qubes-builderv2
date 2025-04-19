@@ -7,6 +7,8 @@ git:
     - '0064428F455451B3EBE78A7F063938BA42CFA724'
     # simon
     - '274E12AB03F2FE293765FC06DA0434BC706E1FCF'
+  # Глобальное отключение проверки подписи
+  insecure-skip-checking: true
 
 backend-vmm: xen
 debug: true
@@ -29,11 +31,16 @@ components:
   - linux-utils  # Нужно для установки ядра
   - dracut       # Для создания initramfs
   - linux-kernel:
-      branch: stable-6.12
+      # Меняем URL репозитория и ветку
+      url: https://github.com/dill-shower/qubes-linux-kernel
+      branch: main
       timeout: 21600
       build-options:
         architecture: x86_64-v3
         optimization: O3
+      # Дополнительно указываем отключение проверки для компонента
+      fetch-options:
+        insecure-skip-checking: true
 
 # Используем Docker вместо dispvm
 executor:
