@@ -11,7 +11,7 @@ git:
   insecure-skip-checking: true
 
 backend-vmm: xen
-debug: true
+debug: false
 verbose: true
 qubes-release: r4.2
 
