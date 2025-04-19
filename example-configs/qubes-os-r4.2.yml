@@ -47,6 +47,7 @@ executor:
   type: docker
   options:
     image: "qubes-builder-fedora:latest"
+    docker-opts: "-v /root/rpm:/builder/repository"
 
 stages:
   - fetch
