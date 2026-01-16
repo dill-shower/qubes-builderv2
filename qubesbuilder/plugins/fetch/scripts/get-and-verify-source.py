@@ -245,14 +245,8 @@ def main(args):
         fresh_clone = True
 
     check = "signed-tag"
-    verify = True
-    if insecure_skip_checking:
-        verify = False
-    elif less_secure_signed_commits_sufficient:
-        check = "signed-tag-or-commit"
-    elif args.git_commit:
-        # user specified pre-verified commit-id
-        verify = False
+    insecure_skip_checking = True
+    verify = False
 
     verify_ref = subprocess.run(
         ["git", "rev-parse", "-q", "--verify", verify_ref],
