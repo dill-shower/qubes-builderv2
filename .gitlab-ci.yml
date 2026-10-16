@@ -516,6 +516,9 @@ cache-vm-bookworm:
 cache-vm-trixie:
   extends: .init_cache_job
 
+cache-vm-forky:
+  extends: .init_cache_job
+
 cache-vm-archlinux:
   extends: .init_cache_job
 
