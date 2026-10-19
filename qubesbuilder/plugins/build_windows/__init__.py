@@ -41,6 +41,7 @@ class WinArtifactKind(StrEnum):
     BIN = "bin"
     INC = "inc"
     LIB = "lib"
+    PDB = "pdb"
 
     def __repr__(self) -> str:
         return self.name
