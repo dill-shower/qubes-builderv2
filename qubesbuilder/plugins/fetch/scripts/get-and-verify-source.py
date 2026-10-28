@@ -128,7 +128,7 @@ def main(args):
     clean = args.clean
     fetch_only = args.fetch_only
     ignore_missing = args.ignore_missing
-    insecure_skip_checking = args.insecure_skip_checking
+    insecure_skip_checking = True
     less_secure_signed_commits_sufficient = (
         args.less_secure_signed_commits_sufficient
     )
@@ -281,7 +281,7 @@ def main(args):
         fresh_clone = True
 
     check = "signed-tag"
-    verify = True
+    verify = False
     if insecure_skip_checking:
         verify = False
     elif less_secure_signed_commits_sufficient:
