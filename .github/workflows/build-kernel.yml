@@ -45,14 +45,14 @@ jobs:
           echo "=== Установка зависимостей хоста ==="
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            python3-pip git gnupg curl xz-utils
+            python3-pip git gnupg curl xz-utils tar
 
           # Отключаем проверку владельца репозиториев на хосте
           git config --global --add safe.directory "*"
 
-          # Установка Python-библиотек для ./qb
-          pip3 install --no-cache-dir docker pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
-          pip3 install --no-cache-dir docker pathspec sh packaging jinja2 click pyyaml requests
+          # Установка Python-библиотек (включая podman, чтобы не маскировались ошибки контейнера)
+          pip3 install --no-cache-dir docker podman pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
+          pip3 install --no-cache-dir docker podman pathspec sh packaging jinja2 click pyyaml requests
 
           # Удаляем несовместимый бинарник sq, если остался
           rm -f "$HOME/.cargo/bin/sq" /usr/local/bin/sq || true
@@ -181,7 +181,6 @@ jobs:
       - name: 6.2. Полное отключение проверки расхождений Kconfig
         run: |
           echo "=== Обезвреживание check-for-config-changes ==="
-          # Заменяем скрипт заглушкой с exit 0 во всех местах, где он найден
           for script in $(find artifacts/sources/linux-kernel-latest/ -name "check-for-config-changes"); do
             echo "Патчим: $script"
             printf '#!/bin/sh\nexit 0\n' > "$script"
@@ -201,3 +200,74 @@ jobs:
       # =========================================================================
       # ПОЛНАЯ ДИАГНОСТИКА: ВЫТАСКИВАНИЕ BUILD.LOG ИЗ КОНТЕЙНЕРА MOCK
       # =========================================================================
+      - name: 7. Диагностика и вывод логов сборки (включая build.log из контейнера)
+        if: failure()
+        run: |
+          echo "================================================================="
+          echo "❌ СБОРКА УПАЛА! ВЫВОД ДИАГНОСТИЧЕСКОЙ ИНФОРМАЦИИ:"
+          echo "================================================================="
+          df -h /
+          free -m
+
+          echo "--- 1. Попытка достать build.log напрямую из контейнеров Docker: ---"
+          found_log=0
+          for cid in $(docker ps -a -q); do
+            echo "Проверяем контейнер $cid..."
+            if docker cp "$cid:/builder/build/build.log" - 2>/dev/null | tar -xO > /tmp/live_build.log 2>/dev/null; then
+              echo "=============================================================="
+              echo ">>> ХВОСТ BUILD.LOG ИЗ КОНТЕЙНЕРА $cid:"
+              echo "=============================================================="
+              tail -n 120 /tmp/live_build.log
+              found_log=1
+              break
+            fi
+          done
+
+          if [ $found_log -eq 0 ]; then
+            echo "build.log в контейнерах не обнаружен. Выводим имеющиеся логи с хоста:"
+            find artifacts/ -type f \( -name "*.log" -o -name "build.log" -o -name "root.log" \) -exec echo ">>> Лог: {}" \; -exec tail -n 60 {} \;
+          fi
+
+      - name: 8. Выгрузка всех файлов логов и отчетов при падении
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-logs
+          path: |
+            /tmp/*.log
+            artifacts/**/*.log
+            artifacts/**/build.log
+            artifacts/**/root.log
+          retention-days: 7
+
+      # =========================================================================
+      # СБОР И ВЫГРУЗКА РЕЗУЛЬТАТОВ (RPM)
+      # =========================================================================
+      - name: 9. Сбор готовых RPM и генерация отчета
+        if: always()
+        run: |
+          mkdir -p output_rpms
+          find artifacts/ -type f -name "*.rpm" -exec cp -v {} output_rpms/ \;
+
+          echo "### 📦 Результаты сборки ядра" >> $GITHUB_STEP_SUMMARY
+          if [ -d "output_rpms" ] && [ "$(ls -A output_rpms)" ]; then
+            echo "| Файл RPM | Размер |" >> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+            for f in output_rpms/*.rpm; do
+              size=$(ls -lh "$f" | awk '{print $5}')
+              name=$(basename "$f")
+              echo "| \`$name\` | $size |" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "❌ RPM-пакеты не были собраны." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 10. Загрузка готовых RPM в GitHub Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qubes-kernel-5900hx-rpm
+          path: output_rpms/*.rpm
+          retention-days: 14
+          compression-level: 3
+          if-no-files-found: error
