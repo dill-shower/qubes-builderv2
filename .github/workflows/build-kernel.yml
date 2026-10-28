@@ -40,12 +40,23 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: 3. Установка зависимостей хоста и настройка Docker
+      - name: 3. Установка хостовых зависимостей, PGP и настройка Docker
         run: |
-          echo "=== Установка зависимостей хоста ==="
+          echo "=== Установка зависимостей хоста и PGP утилит (sq / gpg) ==="
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends python3-pip git
+          sudo apt-get install -y -qq --no-install-recommends \
+            python3-pip git gnupg curl xz-utils sq || \
+          sudo apt-get install -y -qq --no-install-recommends sequoia-sq || true
 
+          # Если sq нет в apt репозитории Ubuntu, скачиваем официальный бинарник sq
+          if ! command -v sq &> /dev/null; then
+            echo "Устанавливаем sq (Sequoia PGP)..."
+            cargo install --git https://gitlab.com/sequoia-pgp/sequoia-sq.git --tag v0.38.0 sq --bin sq --quiet 2>/dev/null || \
+            cargo install sequoia-sq --bin sq --quiet 2>/dev/null || true
+            sudo ln -sf "$HOME/.cargo/bin/sq" /usr/local/bin/sq || true
+          fi
+
+          # Библиотеки Python для ./qb
           pip3 install --no-cache-dir docker pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
           pip3 install --no-cache-dir docker pathspec sh packaging jinja2 click pyyaml requests
 
@@ -109,7 +120,6 @@ jobs:
           docker images | grep qubes-builder-fedora || (echo "CRITICAL: Образ не собрался!" && exit 1)
 
           echo "=== 2. Фикс PAM и беспарольного sudo внутри образа ==="
-          # Запускаем временный контейнер от root, исправляем PAM и сохраняем обратно в образ
           docker run --rm --privileged -u 0 qubes-builder-fedora:latest bash -c "
             passwd -d user || true
             usermod -U user || true
@@ -118,7 +128,6 @@ jobs:
             sed -i '/pam_systemd_home.so/d' /etc/pam.d/* 2>/dev/null || true
           " || true
 
-          # Фиксируем изменения прямо в слое образа qubes-builder-fedora:latest
           docker commit $(docker run -d --privileged -u 0 qubes-builder-fedora:latest bash -c "
             passwd -d user
             echo 'user ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-user
@@ -126,8 +135,9 @@ jobs:
             sed -i '/pam_systemd_home.so/d' /etc/pam.d/* 2>/dev/null || true
           ") qubes-builder-fedora:latest
 
-          echo "=== 3. Проверка работы sudo от пользователя user внутри контейнера ==="
+          echo "=== 3. Проверка работы sudo и sq от пользователя user ==="
           docker run --rm qubes-builder-fedora:latest sudo id
+          which sq || echo "sq на хосте проверим дальше"
 
       - name: 6.1. Fetch (Загрузка исходников ядра и tar.xz)
         run: |
