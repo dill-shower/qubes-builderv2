@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   build-kernel:
-    name: "Build Kernel (host-fcrq)"
+    name: "Build Kernel (host-fc41)"
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -79,7 +79,7 @@ jobs:
           qubes-release: r4.3
 
           distributions:
-            - host-fcrq
+            - host-fc41
 
           components:
             - builder-rpm:
