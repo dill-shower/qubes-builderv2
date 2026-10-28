@@ -1,0 +1,64 @@
+name: Build Custom Qubes Kernel (Zen 3)
+
+on:
+  workflow_dispatch: # Запуск вручную по кнопке
+  push:
+    branches:
+      - main
+    paths:
+      - 'builder.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Лимит GitHub Actions на бесплатном тарифе - 360 минут (6 часов)
+    timeout-minutes: 360
+
+    steps:
+      - name: 1. Очистка диска раннера (Освобождаем ~30 ГБ)
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+          sudo docker image prune -a -f
+          df -h
+
+      - name: 2. Клонирование qubes-builderv2
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: 3. Установка хостовых зависимостей Python
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip python3-yaml python3-click python3-jinja2 python3-packaging git
+          # Устанавливаем библиотеку sh через pip
+          pip3 install sh --break-system-packages || pip3 install sh
+
+      - name: 4. Сборка Docker-образа сборщика
+        run: |
+          # Собираем дефолтный образ без устаревших версий вроде fedora-36
+          ./tools/generate-container-image.sh docker
+
+      - name: 5. Сборка ядра Linux через Qubes Builder v2
+        run: |
+          # Собираем только linux-kernel-latest под host-fcrq
+          ./qb -c linux-kernel-latest package build
+
+      - name: 6. Поиск и сбор готовых RPM пакетов
+        if: always()
+        run: |
+          mkdir -p output_rpms
+          # Находим все собранные RPM пакеты (kernel, kernel-modules, kernel-devel)
+          find artifacts/ -name "*.rpm" -exec cp {} output_rpms/ \;
+          ls -la output_rpms/
+
+      - name: 7. Загрузка готовых RPM в артефакты GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: qubes-kernel-5900hx-rpm
+          path: output_rpms/*.rpm
+          retention-days: 14
+          if-no-files-found: error
