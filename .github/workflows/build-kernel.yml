@@ -40,34 +40,41 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: 3. Установка хостовых зависимостей и настройка Docker
+      - name: 3. Установка зависимостей хоста и запуск Docker
         run: |
-          echo "=== Установка пакетов Python и настройка прав Docker ==="
+          echo "=== Установка зависимостей хоста ==="
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends python3-pip git
 
-          # Ставим все необходимые библиотеки для ./qb через pip
+          # Ставим библиотеки Python для ./qb
           pip3 install --no-cache-dir pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
           pip3 install --no-cache-dir pathspec sh packaging jinja2 click pyyaml requests
 
-          # Настройка прав на Docker сокет для пользователя runner
+          # Запуск и настройка родного демона Docker
+          sudo systemctl start docker || sudo service docker start || true
           sudo usermod -aG docker $USER
           sudo chmod 666 /var/run/docker.sock || true
 
-          # Проверка бинарника docker в PATH
-          which docker
-          docker --version
-          docker ps
+          # Гарантируем видимость бинарника во всех системных путях PATH
+          sudo ln -sf $(which docker) /usr/local/bin/docker || true
+          sudo ln -sf $(which docker) /usr/bin/docker || true
 
       - name: 4. Предварительные тесты окружения (Pre-flight checks)
         run: |
-          echo "=== 1. Проверка доступности бинарников ==="
-          which docker || (echo "CRITICAL: docker не найден в PATH!" && exit 1)
-          which python3 || (echo "CRITICAL: python3 не найден в PATH!" && exit 1)
-          which git || (echo "CRITICAL: git не найден в PATH!" && exit 1)
+          echo "=== 1. Проверка доступности Docker демона ==="
+          docker version
+          docker info > /dev/null 2>&1 && echo "✓ Демон Docker активен и доступен" || (echo "CRITICAL: Docker daemon не отвечает!" && exit 1)
 
-          echo "=== 2. Проверка работы Docker-демона ==="
-          docker info > /dev/null 2>&1 && echo "✓ Docker работает и сокет доступен" || (echo "CRITICAL: Нет связи с демоном Docker!" && exit 1)
+          echo "=== 2. Проверка видимости Docker из самого Python ==="
+          python3 -c "
+          import shutil, sh
+          d1 = shutil.which('docker')
+          d2 = sh.which('docker')
+          print(f'shutil.which: {d1}')
+          print(f'sh.which: {d2}')
+          assert d1 or d2, 'CRITICAL: Python не видит docker в PATH!'
+          print('✓ Python видит бинарник docker')
+          "
 
           echo "=== 3. Проверка Python-библиотек для ./qb ==="
           python3 -c "
