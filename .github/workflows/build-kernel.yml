@@ -40,72 +40,103 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: 3. Установка зависимостей хоста и запуск Docker
+      - name: 3. Установка хостовых зависимостей и настройка окружения
         run: |
           echo "=== Установка зависимостей хоста ==="
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends python3-pip git
 
-          # Ставим библиотеки Python для ./qb
-          pip3 install --no-cache-dir pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
-          pip3 install --no-cache-dir pathspec sh packaging jinja2 click pyyaml requests
+          # УСТАНАВЛИВАЕМ ПИТОН-МОДУЛЬ DOCKER (то из-за чего падало в container.py!)
+          pip3 install --no-cache-dir docker pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
+          pip3 install --no-cache-dir docker pathspec sh packaging jinja2 click pyyaml requests
 
-          # Запуск и настройка родного демона Docker
+          # Запуск и настройка прав Docker
           sudo systemctl start docker || sudo service docker start || true
           sudo usermod -aG docker $USER
           sudo chmod 666 /var/run/docker.sock || true
 
-          # Гарантируем видимость бинарника во всех системных путях PATH
-          sudo ln -sf $(which docker) /usr/local/bin/docker || true
-          sudo ln -sf $(which docker) /usr/bin/docker || true
+          # Подгрузка модуля loop для /dev/loop-control (требуется container.py)
+          sudo modprobe loop || true
 
-      - name: 4. Предварительные тесты окружения (Pre-flight checks)
+      - name: 4. Генерация эталонного builder.yml
+        run: |
+          echo "=== Создаем builder.yml с опцией git-run-inplace ==="
+          cat << 'EOF' > builder.yml
+          git:
+            baseurl: https://github.com
+            prefix: QubesOS/qubes-
+            branch: release4.3
+            maintainers:
+              - '0064428F455451B3EBE78A7F063938BA42CFA724'
+              - '274E12AB03F2FE293765FC06DA0434BC706E1FCF'
+
+          # Клонирование репозиториев напрямую хостом
+          git-run-inplace: true
+
+          backend-vmm: xen
+          debug: true
+          verbose: true
+          qubes-release: r4.3
+
+          distributions:
+            - host-fcrq
+
+          components:
+            - builder-rpm:
+                packages: False
+                branch: main
+            - linux-kernel-latest:
+                url: https://github.com/dill-shower/qubes-linux-kernel
+                branch: main
+                verification-mode: insecure-skip-checking
+                timeout: 21600
+
+          executor:
+            type: docker
+            options:
+              image: "qubes-builder-fedora:latest"
+              clean: true
+
+          stages:
+            - fetch
+            - prep
+            - build
+          EOF
+          cat builder.yml
+
+      - name: 5. Предварительные тесты окружения (Pre-flight checks)
         run: |
           echo "=== 1. Проверка доступности Docker демона ==="
           docker version
           docker info > /dev/null 2>&1 && echo "✓ Демон Docker активен и доступен" || (echo "CRITICAL: Docker daemon не отвечает!" && exit 1)
 
-          echo "=== 2. Проверка видимости Docker из самого Python ==="
+          echo "=== 2. Проверка импорта Python DockerClient (проверка фикса container.py) ==="
           python3 -c "
-          import shutil, sh
-          d1 = shutil.which('docker')
-          d2 = sh.which('docker')
-          print(f'shutil.which: {d1}')
-          print(f'sh.which: {d2}')
-          assert d1 or d2, 'CRITICAL: Python не видит docker в PATH!'
-          print('✓ Python видит бинарник docker')
+          from docker import DockerClient
+          client = DockerClient()
+          print('✓ Python-библиотека docker успешно подключилась к сокету:', client.version()['Version'])
           "
 
-          echo "=== 3. Проверка Python-библиотек для ./qb ==="
-          python3 -c "
-          import pathspec, sh, yaml, click, jinja2, requests, packaging
-          print('✓ Все требуемые Python библиотеки успешно импортированы')
-          "
+          echo "=== 3. Проверка loop-control ==="
+          ls -la /dev/loop-control && echo "✓ /dev/loop-control готов"
 
-          echo "=== 4. Проверка конфига builder.yml ==="
-          if [ -f builder.yml ]; then
-            echo "✓ builder.yml найден"
-          else
-            echo "CRITICAL: Файл builder.yml отсутствует в корне репозитория!" && exit 1
-          fi
-
-      - name: 5. Сборка базового Docker-образа
+      - name: 6. Сборка базового Docker-образа
         run: |
           echo "=== Генерация образа qubes-builder-fedora:latest ==="
           ./tools/generate-container-image.sh docker
           docker images | grep qubes-builder-fedora || (echo "CRITICAL: Образ не собрался!" && exit 1)
 
-      - name: 6.1. Fetch (Загрузка исходников и сабмодулей)
+      - name: 7.1. Fetch (Загрузка исходников ядра)
         run: |
           echo "=== [STAGE: FETCH] ==="
           ./qb --verbose --debug -c linux-kernel-latest package fetch
 
-      - name: 6.2. Prep (Подготовка Chroot, спека и генерация SRPM)
+      - name: 7.2. Prep (Подготовка Chroot, спека и генерация SRPM)
         run: |
           echo "=== [STAGE: PREP] ==="
           ./qb --verbose --debug -c linux-kernel-latest package prep
 
-      - name: 6.3. Build (Компиляция ядра GCC под Zen 3)
+      - name: 7.3. Build (Компиляция ядра GCC под Zen 3 в Docker)
         run: |
           echo "=== [STAGE: BUILD] ==="
           ./qb --verbose --debug -c linux-kernel-latest package build
@@ -113,7 +144,7 @@ jobs:
       # =========================================================================
       # ДИАГНОСТИКА ПРИ ОШИБКАХ
       # =========================================================================
-      - name: 7. Диагностика и вывод логов при падении сборки
+      - name: 8. Диагностика и вывод логов при падении сборки
         if: failure()
         run: |
           echo "================================================================="
@@ -134,7 +165,7 @@ jobs:
             tail -n 80 "$log"
           done
 
-      - name: 8. Выгрузка полных логов сборки при падении
+      - name: 9. Выгрузка полных логов сборки при падении
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -145,7 +176,7 @@ jobs:
       # =========================================================================
       # СБОР И ВЫГРУЗКА РЕЗУЛЬТАТОВ (RPM)
       # =========================================================================
-      - name: 9. Сбор готовых RPM и генерация отчета
+      - name: 10. Сбор готовых RPM и генерация отчета
         if: always()
         run: |
           mkdir -p output_rpms
@@ -164,7 +195,7 @@ jobs:
             echo "❌ RPM-пакеты не были собраны." >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: 10. Загрузка готовых RPM в GitHub Artifacts
+      - name: 11. Загрузка готовых RPM в GitHub Artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
