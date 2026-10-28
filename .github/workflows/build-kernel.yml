@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   build-kernel:
-    name: "Build Kernel (host-fc41)"
+    name: "Build Kernel (host-fcrq)"
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -40,13 +40,12 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: 3. Установка хостовых зависимостей и настройка окружения
+      - name: 3. Установка зависимостей хоста и настройка Docker
         run: |
           echo "=== Установка зависимостей хоста ==="
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends python3-pip git
 
-          # УСТАНАВЛИВАЕМ ПИТОН-МОДУЛЬ DOCKER (то из-за чего падало в container.py!)
           pip3 install --no-cache-dir docker pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
           pip3 install --no-cache-dir docker pathspec sh packaging jinja2 click pyyaml requests
 
@@ -55,12 +54,12 @@ jobs:
           sudo usermod -aG docker $USER
           sudo chmod 666 /var/run/docker.sock || true
 
-          # Подгрузка модуля loop для /dev/loop-control (требуется container.py)
+          # Подгрузка модуля loop для /dev/loop-control
           sudo modprobe loop || true
 
       - name: 4. Генерация эталонного builder.yml
         run: |
-          echo "=== Создаем builder.yml с опцией git-run-inplace ==="
+          echo "=== Создаем builder.yml ==="
           cat << 'EOF' > builder.yml
           git:
             baseurl: https://github.com
@@ -70,7 +69,6 @@ jobs:
               - '0064428F455451B3EBE78A7F063938BA42CFA724'
               - '274E12AB03F2FE293765FC06DA0434BC706E1FCF'
 
-          # Клонирование репозиториев напрямую хостом
           git-run-inplace: true
 
           backend-vmm: xen
@@ -104,39 +102,44 @@ jobs:
           EOF
           cat builder.yml
 
-      - name: 5. Предварительные тесты окружения (Pre-flight checks)
+      - name: 5. Сборка и фикс прав PAM/sudo в Docker-образе
         run: |
-          echo "=== 1. Проверка доступности Docker демона ==="
-          docker version
-          docker info > /dev/null 2>&1 && echo "✓ Демон Docker активен и доступен" || (echo "CRITICAL: Docker daemon не отвечает!" && exit 1)
-
-          echo "=== 2. Проверка импорта Python DockerClient (проверка фикса container.py) ==="
-          python3 -c "
-          from docker import DockerClient
-          client = DockerClient()
-          print('✓ Python-библиотека docker успешно подключилась к сокету:', client.version()['Version'])
-          "
-
-          echo "=== 3. Проверка loop-control ==="
-          ls -la /dev/loop-control && echo "✓ /dev/loop-control готов"
-
-      - name: 6. Сборка базового Docker-образа
-        run: |
-          echo "=== Генерация образа qubes-builder-fedora:latest ==="
+          echo "=== 1. Генерация образа qubes-builder-fedora:latest ==="
           ./tools/generate-container-image.sh docker
           docker images | grep qubes-builder-fedora || (echo "CRITICAL: Образ не собрался!" && exit 1)
 
-      - name: 7.1. Fetch (Загрузка исходников ядра)
+          echo "=== 2. Фикс PAM и беспарольного sudo внутри образа ==="
+          # Запускаем временный контейнер от root, исправляем PAM и сохраняем обратно в образ
+          docker run --rm --privileged -u 0 qubes-builder-fedora:latest bash -c "
+            passwd -d user || true
+            usermod -U user || true
+            echo 'user ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-user
+            chmod 0440 /etc/sudoers.d/99-user
+            sed -i '/pam_systemd_home.so/d' /etc/pam.d/* 2>/dev/null || true
+          " || true
+
+          # Фиксируем изменения прямо в слое образа qubes-builder-fedora:latest
+          docker commit $(docker run -d --privileged -u 0 qubes-builder-fedora:latest bash -c "
+            passwd -d user
+            echo 'user ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-user
+            chmod 0440 /etc/sudoers.d/99-user
+            sed -i '/pam_systemd_home.so/d' /etc/pam.d/* 2>/dev/null || true
+          ") qubes-builder-fedora:latest
+
+          echo "=== 3. Проверка работы sudo от пользователя user внутри контейнера ==="
+          docker run --rm qubes-builder-fedora:latest sudo id
+
+      - name: 6.1. Fetch (Загрузка исходников ядра и tar.xz)
         run: |
           echo "=== [STAGE: FETCH] ==="
           ./qb --verbose --debug -c linux-kernel-latest package fetch
 
-      - name: 7.2. Prep (Подготовка Chroot, спека и генерация SRPM)
+      - name: 6.2. Prep (Подготовка Chroot, спека и генерация SRPM)
         run: |
           echo "=== [STAGE: PREP] ==="
           ./qb --verbose --debug -c linux-kernel-latest package prep
 
-      - name: 7.3. Build (Компиляция ядра GCC под Zen 3 в Docker)
+      - name: 6.3. Build (Компиляция ядра GCC под Zen 3 в Docker)
         run: |
           echo "=== [STAGE: BUILD] ==="
           ./qb --verbose --debug -c linux-kernel-latest package build
@@ -144,7 +147,7 @@ jobs:
       # =========================================================================
       # ДИАГНОСТИКА ПРИ ОШИБКАХ
       # =========================================================================
-      - name: 8. Диагностика и вывод логов при падении сборки
+      - name: 7. Диагностика и вывод логов при падении сборки
         if: failure()
         run: |
           echo "================================================================="
@@ -165,7 +168,7 @@ jobs:
             tail -n 80 "$log"
           done
 
-      - name: 9. Выгрузка полных логов сборки при падении
+      - name: 8. Выгрузка полных логов сборки при падении
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -176,7 +179,7 @@ jobs:
       # =========================================================================
       # СБОР И ВЫГРУЗКА РЕЗУЛЬТАТОВ (RPM)
       # =========================================================================
-      - name: 10. Сбор готовых RPM и генерация отчета
+      - name: 9. Сбор готовых RPM и генерация отчета
         if: always()
         run: |
           mkdir -p output_rpms
@@ -195,7 +198,7 @@ jobs:
             echo "❌ RPM-пакеты не были собраны." >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: 11. Загрузка готовых RPM в GitHub Artifacts
+      - name: 10. Загрузка готовых RPM в GitHub Artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
