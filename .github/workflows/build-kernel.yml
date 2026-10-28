@@ -20,7 +20,6 @@ jobs:
       - name: 1. Очистка диска через Rust (rm-rs)
         run: |
           echo "=== Установка rm-rs и очистка диска ==="
-          # Быстрая установка крошечного бинарника rm-rs
           cargo install rm-rs --quiet 2>/dev/null || true
 
           RM_BIN=$(which rm-rs || echo "$HOME/.cargo/bin/rm-rs")
@@ -41,19 +40,24 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: 3. Установка хостовых зависимостей и настройка окружения
+      - name: 3. Установка хостовых зависимостей и настройка Docker
         run: |
-          echo "=== Установка пакетов хоста ==="
+          echo "=== Установка пакетов Python и настройка прав Docker ==="
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            python3-pip python3-yaml python3-click python3-jinja2 python3-packaging \
-            python3-pathspec python3-requests git docker.io
+          sudo apt-get install -y -qq --no-install-recommends python3-pip git
 
+          # Ставим все необходимые библиотеки для ./qb через pip
           pip3 install --no-cache-dir pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
           pip3 install --no-cache-dir pathspec sh packaging jinja2 click pyyaml requests
 
+          # Настройка прав на Docker сокет для пользователя runner
           sudo usermod -aG docker $USER
           sudo chmod 666 /var/run/docker.sock || true
+
+          # Проверка бинарника docker в PATH
+          which docker
+          docker --version
+          docker ps
 
       - name: 4. Предварительные тесты окружения (Pre-flight checks)
         run: |
