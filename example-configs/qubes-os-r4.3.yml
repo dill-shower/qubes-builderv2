@@ -12,7 +12,7 @@ verbose: true
 qubes-release: r4.3
 
 distributions:
-  - host-fcrq
+  - host-fc43
 
 components:
   - builder-rpm:
@@ -24,28 +24,26 @@ components:
       url: https://github.com/dill-shower/qubes-linux-kernel
       branch: main
       timeout: 21600
-      host-fc41:
+      # Применяем настройки для дистрибутива dom0 (host-fcrq)
+      host-fc43:
         stages:
           - build:
               environment:
-                MAKEFLAGS: "-j$(($(nproc) * 2))"
+                # Количество параллельных потоков
+                MAKEFLAGS: "-j$(nproc)"
+                # Оптимизация строго под AMD Zen 3 (Ryzen 5900HX)
+                KCFLAGS: "-march=znver3 -mtune=znver3 -O2"
+                EXTRA_CFLAGS: "-march=znver3 -mtune=znver3 -O2"
 
 executor:
   type: docker
   options:
     image: "qubes-builder-fedora:latest"
     clean: True
-    cpus: "0.000" 
+    cpus: "0.000"
 
 stages:
   - fetch
   - prep
   - build
   - post
-  - verify
-  - sign:
-      executor:
-        type: local
-  - publish:
-      executor:
-        type: local
