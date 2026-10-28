@@ -23,6 +23,7 @@ components:
   - linux-kernel-latest:
       url: https://github.com/dill-shower/qubes-linux-kernel
       branch: main
+      verification-mode: insecure-skip-checking
       timeout: 21600
       host-fc41:
         stages:
