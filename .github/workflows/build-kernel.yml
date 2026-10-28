@@ -1,28 +1,28 @@
 name: Build Custom Qubes Kernel (Zen 3)
 
 on:
-  workflow_dispatch: # Запуск вручную по кнопке
+  workflow_dispatch: # Запуск вручную по кнопке в любое время
   push:
     branches:
-      - main
-    paths:
-      - 'builder.yml'
+      - main         # Автозапуск при любом пуше в ветку main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true # Отменяет прошлый запуск, если сделан новый пуш
 
 jobs:
-  build:
+  build-kernel:
+    name: "Build Kernel (host-fcrq)"
     runs-on: ubuntu-latest
-    # Лимит GitHub Actions на бесплатном тарифе - 360 минут (6 часов)
-    timeout-minutes: 360
+    timeout-minutes: 360 # Лимит бесплатного раннера GitHub (6 часов)
 
     steps:
-      - name: 1. Очистка диска раннера (Освобождаем ~30 ГБ)
+      - name: 1. Быстрая очистка диска (Освобождение ~30 ГБ)
         run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache
-          sudo docker image prune -a -f
-          df -h
+          echo "Очищаем дисковое пространство раннера..."
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          sudo docker image prune -a -f > /dev/null 2>&1
+          df -h /
 
       - name: 2. Клонирование qubes-builderv2
         uses: actions/checkout@v4
@@ -30,35 +30,59 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: 3. Установка хостовых зависимостей Python
+      - name: 3. Установка хостовых зависимостей
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip python3-yaml python3-click python3-jinja2 python3-packaging git
-          # Устанавливаем библиотеку sh через pip
-          pip3 install sh --break-system-packages || pip3 install sh
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            python3-pip python3-yaml python3-click python3-jinja2 python3-packaging \
+            python3-pathspec python3-requests git
+          pip3 install --no-cache-dir pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
+          pip3 install --no-cache-dir pathspec sh packaging jinja2 click pyyaml requests
 
-      - name: 4. Сборка Docker-образа сборщика
+      - name: 4. Сборка базового Docker-образа
         run: |
-          # Собираем дефолтный образ без устаревших версий вроде fedora-36
+          echo "Генерируем актуальный образ qubes-builder-fedora:latest..."
           ./tools/generate-container-image.sh docker
 
-      - name: 5. Сборка ядра Linux через Qubes Builder v2
+      - name: 5.1. Fetch (Загрузка исходников и сабмодулей)
         run: |
-          # Собираем только linux-kernel-latest под host-fcrq
+          echo "Скачиваем исходники ядра и компоненты..."
+          ./qb -c linux-kernel-latest package fetch
+
+      - name: 5.2. Prep (Подготовка Chroot, спека и генерация SRPM)
+        run: |
+          echo "Инициализация кэша и подготовка SRPM..."
+          ./qb -c linux-kernel-latest package prep
+
+      - name: 5.3. Build (Компиляция ядра GCC под Zen 3)
+        run: |
+          echo "Запуск компиляции ядра..."
           ./qb -c linux-kernel-latest package build
 
-      - name: 6. Поиск и сбор готовых RPM пакетов
+      - name: 6. Сборка артефактов и генерация отчета
         if: always()
         run: |
           mkdir -p output_rpms
-          # Находим все собранные RPM пакеты (kernel, kernel-modules, kernel-devel)
-          find artifacts/ -name "*.rpm" -exec cp {} output_rpms/ \;
-          ls -la output_rpms/
+          find artifacts/ -type f -name "*.rpm" -exec cp -v {} output_rpms/ \;
 
-      - name: 7. Загрузка готовых RPM в артефакты GitHub
+          echo "### 📦 Результаты сборки ядра" >> $GITHUB_STEP_SUMMARY
+          if [ -d "output_rpms" ] && [ "$(ls -A output_rpms)" ]; then
+            echo "| Файл RPM | Размер |" >> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+            for f in output_rpms/*.rpm; do
+              size=$(ls -lh "$f" | awk '{print $5}')
+              name=$(basename "$f")
+              echo "| \`$name\` | $size |" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "❌ RPM-пакеты не были собраны. Проверьте логи шага Build." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 7. Загрузка готовых RPM в GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: qubes-kernel-5900hx-rpm
+          name: qubes-kernel-rpm
           path: output_rpms/*.rpm
           retention-days: 14
+          compression-level: 3 # Оптимальный баланс скорость/размер
           if-no-files-found: error
