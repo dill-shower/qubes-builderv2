@@ -40,25 +40,57 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: 3. Установка хостовых зависимостей, PGP и настройка Docker
+      - name: 3. Установка хостовых зависимостей и настройка окружения
         run: |
-          echo "=== Установка зависимостей хоста и PGP утилит (sq / gpg) ==="
+          echo "=== Установка зависимостей хоста ==="
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            python3-pip git gnupg curl xz-utils sq || \
-          sudo apt-get install -y -qq --no-install-recommends sequoia-sq || true
+            python3-pip git gnupg curl xz-utils
 
-          # Если sq нет в apt репозитории Ubuntu, скачиваем официальный бинарник sq
-          if ! command -v sq &> /dev/null; then
-            echo "Устанавливаем sq (Sequoia PGP)..."
-            cargo install --git https://gitlab.com/sequoia-pgp/sequoia-sq.git --tag v0.38.0 sq --bin sq --quiet 2>/dev/null || \
-            cargo install sequoia-sq --bin sq --quiet 2>/dev/null || true
-            sudo ln -sf "$HOME/.cargo/bin/sq" /usr/local/bin/sq || true
-          fi
-
-          # Библиотеки Python для ./qb
+          # Установка Python-библиотек для ./qb
           pip3 install --no-cache-dir docker pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
           pip3 install --no-cache-dir docker pathspec sh packaging jinja2 click pyyaml requests
+
+          # Удаляем несовместимый sq, если он был собран в cargo
+          rm -f "$HOME/.cargo/bin/sq" /usr/local/bin/sq || true
+
+          # Создаем универсальный адаптер sq, реализующий интерфейс через стабильный gpg
+          sudo bash -c 'cat << "EOF" > /usr/local/bin/sq
+          #!/usr/bin/env bash
+          set -e
+          # Обработка: sq (toolbox) keyring merge --output OUT FILES...
+          if [[ "$1" == "toolbox" ]]; then shift; fi
+          if [[ "$1" == "keyring" && "$2" == "merge" ]]; then
+              shift 2
+              out=""
+              files=()
+              while [[ $# -gt 0 ]]; do
+                  case "$1" in
+                      --output) out="$2"; shift 2 ;;
+                      *) files+=("$1"); shift ;;
+                  esac
+              done
+              cat "${files[@]}" > "$out"
+              exit 0
+          fi
+          # Обработка: sq packet dearmor --output OUT IN или sq dearmor --output OUT IN
+          if [[ "$1" == "packet" && "$2" == "dearmor" ]] || [[ "$1" == "dearmor" ]]; then
+              if [[ "$1" == "packet" ]]; then shift 2; else shift 1; fi
+              out=""
+              in=""
+              while [[ $# -gt 0 ]]; do
+                  case "$1" in
+                      --output) out="$2"; shift 2 ;;
+                      *) in="$1"; shift ;;
+                  esac
+              done
+              gpg --batch --yes --dearmor --output "$out" "$in"
+              exit 0
+          fi
+          # Все остальные вызовы транслируем в gpg
+          exec gpg "$@"
+          EOF'
+          sudo chmod +x /usr/local/bin/sq
 
           # Запуск и настройка прав Docker
           sudo systemctl start docker || sudo service docker start || true
@@ -135,9 +167,8 @@ jobs:
             sed -i '/pam_systemd_home.so/d' /etc/pam.d/* 2>/dev/null || true
           ") qubes-builder-fedora:latest
 
-          echo "=== 3. Проверка работы sudo и sq от пользователя user ==="
+          echo "=== 3. Проверка работы sudo от пользователя user ==="
           docker run --rm qubes-builder-fedora:latest sudo id
-          which sq || echo "sq на хосте проверим дальше"
 
       - name: 6.1. Fetch (Загрузка исходников ядра и tar.xz)
         run: |
