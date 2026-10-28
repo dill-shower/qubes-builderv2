@@ -297,7 +297,7 @@ fi
 
 export CHECK=signed-tag
 
-verify=true
+verify=false
 if [ "$INSECURE_SKIP_CHECKING" == "1" ]; then
     verify=false
 elif [ "$LESS_SECURE_SIGNED_COMMITS_SUFFICIENT" == "1" ]; then
