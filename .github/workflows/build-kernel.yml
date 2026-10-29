@@ -50,7 +50,7 @@ jobs:
           # Отключаем проверку владельца репозиториев на хосте
           git config --global --add safe.directory "*"
 
-          # Установка Python-библиотек (включая podman, чтобы не маскировались ошибки контейнера)
+          # Установка Python-библиотек
           pip3 install --no-cache-dir docker podman pathspec sh packaging jinja2 click pyyaml requests --break-system-packages 2>/dev/null || \
           pip3 install --no-cache-dir docker podman pathspec sh packaging jinja2 click pyyaml requests
 
@@ -178,29 +178,20 @@ jobs:
           echo "=== [STAGE: FETCH] ==="
           ./qb --verbose --debug -c linux-kernel-latest package fetch
 
-      - name: 6.2. Полное отключение проверки расхождений Kconfig
-        run: |
-          echo "=== Обезвреживание check-for-config-changes ==="
-          for script in $(find artifacts/sources/linux-kernel-latest/ -name "check-for-config-changes"); do
-            echo "Патчим: $script"
-            printf '#!/bin/sh\nexit 0\n' > "$script"
-            chmod +x "$script"
-          done
-
-      - name: 6.3. Prep (Подготовка Chroot, спека и генерация SRPM)
+      - name: 6.2. Prep (Подготовка Chroot, спека и генерация SRPM)
         run: |
           echo "=== [STAGE: PREP] ==="
           ./qb --verbose --debug -c linux-kernel-latest package prep
 
-      - name: 6.4. Build (Компиляция ядра GCC под Zen 3 в Docker)
+      - name: 6.3. Build (Компиляция ядра GCC под Zen 3 в Docker)
         run: |
           echo "=== [STAGE: BUILD] ==="
           ./qb --verbose --debug -c linux-kernel-latest package build
 
       # =========================================================================
-      # ПОЛНАЯ ДИАГНОСТИКА: ВЫТАСКИВАНИЕ BUILD.LOG ИЗ КОНТЕЙНЕРА MOCK
+      # ПОЛНАЯ ДИАГНОСТИКА ПРИ ОШИБКАХ
       # =========================================================================
-      - name: 7. Диагностика и вывод логов сборки (включая build.log из контейнера)
+      - name: 7. Диагностика и вывод логов сборки
         if: failure()
         run: |
           echo "================================================================="
@@ -209,22 +200,18 @@ jobs:
           df -h /
           free -m
 
-          echo "--- 1. Попытка достать build.log напрямую из контейнеров Docker: ---"
-          found_log=0
+          echo "--- 1. Попытка достать build.log из контейнеров Docker: ---"
+          mkdir -p /tmp/extracted_logs
           for cid in $(docker ps -a -q); do
-            echo "Проверяем контейнер $cid..."
-            if docker cp "$cid:/builder/build/build.log" - 2>/dev/null | tar -xO > /tmp/live_build.log 2>/dev/null; then
-              echo "=============================================================="
-              echo ">>> ХВОСТ BUILD.LOG ИЗ КОНТЕЙНЕРА $cid:"
-              echo "=============================================================="
-              tail -n 120 /tmp/live_build.log
-              found_log=1
-              break
-            fi
+            docker cp "$cid:/builder/build/build.log" /tmp/extracted_logs/ 2>/dev/null || true
+            docker cp "$cid:/builddir/build/BUILD/build.log" /tmp/extracted_logs/ 2>/dev/null || true
           done
 
-          if [ $found_log -eq 0 ]; then
-            echo "build.log в контейнерах не обнаружен. Выводим имеющиеся логи с хоста:"
+          if [ -f /tmp/extracted_logs/build.log ]; then
+            echo ">>> НАЙДЕН BUILD.LOG:"
+            tail -n 150 /tmp/extracted_logs/build.log
+          else
+            echo "Логи на диске хоста:"
             find artifacts/ -type f \( -name "*.log" -o -name "build.log" -o -name "root.log" \) -exec echo ">>> Лог: {}" \; -exec tail -n 60 {} \;
           fi
 
@@ -234,22 +221,23 @@ jobs:
         with:
           name: build-failure-logs
           path: |
-            /tmp/*.log
+            /tmp/extracted_logs/*.log
             artifacts/**/*.log
             artifacts/**/build.log
             artifacts/**/root.log
           retention-days: 7
 
       # =========================================================================
-      # СБОР И ВЫГРУЗКА РЕЗУЛЬТАТОВ (RPM)
+      # СБОР И ВЫГРУЗКА ТОЛЬКО ГОТОВЫХ ЯДЕРНЫХ RPM (БЕЗ МУСОРА КЭША)
       # =========================================================================
-      - name: 9. Сбор готовых RPM и генерация отчета
+      - name: 9. Сбор готовых RPM ядра и генерация отчета
         if: always()
         run: |
           mkdir -p output_rpms
-          find artifacts/ -type f -name "*.rpm" -exec cp -v {} output_rpms/ \;
+          # Ищем ТОЛЬКО пакеты ядра в папке компонентов, исключая chroot кэш и src.rpm
+          find artifacts/components/linux-kernel-latest/ -type f -name "kernel-latest-*.x86_64.rpm" -exec cp -v {} output_rpms/ \;
 
-          echo "### 📦 Результаты сборки ядра" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Результаты сборки ядра (Zen 3)" >> $GITHUB_STEP_SUMMARY
           if [ -d "output_rpms" ] && [ "$(ls -A output_rpms)" ]; then
             echo "| Файл RPM | Размер |" >> $GITHUB_STEP_SUMMARY
             echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
