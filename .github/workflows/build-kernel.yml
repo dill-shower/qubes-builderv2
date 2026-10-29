@@ -266,7 +266,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: qubes-kernel-5900hx-rpm
+          name: qubes-kernel-rpm
           path: output_rpms/*.rpm
           retention-days: 14
           compression-level: 3
