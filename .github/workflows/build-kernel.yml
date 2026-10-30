@@ -1,4 +1,4 @@
-name: Build Custom Qubes Kernel (Zen 3)
+name: Build Custom Qubes Kernel 7.3.1 TEST
 
 on:
   workflow_dispatch:
