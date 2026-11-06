@@ -1,4 +1,4 @@
-name: Build Custom Qubes Kernel 7.3.1 TEST
+name: Build Custom Qubes Kernel Latest
 
 on:
   workflow_dispatch:
@@ -183,7 +183,7 @@ jobs:
           echo "=== [STAGE: PREP] ==="
           ./qb --verbose --debug -c linux-kernel-latest package prep
 
-      - name: 6.3. Build (Компиляция ядра GCC под Zen 3 в Docker)
+      - name: 6.3. Build (Компиляция ядра GCC в Docker)
         run: |
           echo "=== [STAGE: BUILD] ==="
           ./qb --verbose --debug -c linux-kernel-latest package build
